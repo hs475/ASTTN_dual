@@ -2,8 +2,8 @@ Final Project For ECE228
 
 # ASTTN_pytorch with Weather Integration
 
-A lightweight fork of ASTTN_pytorch that augments the original spatial-temporal transformer for traffic forecasting with weather features (e.g., temperature, precipitation, humidity).  
-
+A lightweight fork of ASTTN_pytorch that augments the original spatial-temporal transformer for traffic forecasting with weather features (e.g., temperature, precipitation, humidity).  the reference
+ https://github.com/yokifly/ASTTN_pytorch
 - **Integration**: Align weather time series with traffic data and concatenate or embed as extra node features.  
 - **Usage**:  
   1. Prepare traffic and weather CSVs with matching timestamps.  

@@ -6,7 +6,6 @@ import dgl
 import dgl.function as fn
 from dgl.nn.functional import edge_softmax
 from model.model_utils import *
-device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 class Model_Adp(nn.Module):
     def __init__(self, SE, args, window_size = 3, T = 12, N=None):
@@ -17,9 +16,9 @@ class Model_Adp(nn.Module):
         D = K * d
 
         self.num_his = args.num_his
-        self.SE = SE.to(device)
+        self.SE = SE
         emb_dim = SE.shape[1]
-        self.STEmbedding = STEmbedding(D, emb_dim=emb_dim).to(device)
+        self.STEmbedding = STEmbedding(D, emb_dim=emb_dim)
 
         self.STAttBlock_1 = nn.ModuleList([ST_Layer(K, d, T=T, window_size = window_size,N=N) for _ in range(L)])
         self.STAttBlock_2 = nn.ModuleList([ST_Layer(K, d, T=T, window_size = window_size,N=N) for _ in range(L)])
@@ -30,11 +29,14 @@ class Model_Adp(nn.Module):
 
 
     def forward(self, X, TE):
+        # 确保SE与输入X在同一设备上
+        SE = self.SE.to(X.device)
+        
         # input
         X = torch.unsqueeze(X, -1)
         X = self.mlp_1(X)
         # STE
-        STE = self.STEmbedding(self.SE, TE)
+        STE = self.STEmbedding(SE, TE)
         STE_his = STE[:, :self.num_his]
         STE_pred = STE[:, self.num_his:]
         # encoder
@@ -76,9 +78,9 @@ class STAttention_Adp(nn.Module):
         self.FC_k  = nn.Linear(2*D, D)
         self.FC_v  = nn.Linear(2*D, D)
  
-        self.nodevec1 =nn.Parameter(torch.randn(N, 20).cuda(), requires_grad=True)
-        self.nodevec2 = nn.Parameter(torch.randn(20, N).cuda(), requires_grad=True)
-        self.attn_output =  TransformerSelfOutput(D,D)
+        self.nodevec1 = nn.Parameter(torch.randn(N, 20), requires_grad=True)
+        self.nodevec2 = nn.Parameter(torch.randn(20, N), requires_grad=True)
+        self.attn_output = TransformerSelfOutput(D,D)
         self.shift_list = self.get_shift_list()
 
     def get_shift_list(self):
@@ -102,8 +104,7 @@ class STAttention_Adp(nn.Module):
         adp_A = adp_A*bin_mask
         idxs= torch.nonzero(adp_A)
         src,dst = idxs[:,0],idxs[:,1]
-        adp_g = dgl.graph((src, dst)).to("cuda")
-        # adp_g.edata['weight'] = adp_A[src,dst].cuda()
+        adp_g = dgl.graph((src, dst)).to(adp_A.device)
         return adp_g
 
     def forward(self, X, STE):

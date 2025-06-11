@@ -7,7 +7,6 @@ import dgl.function as fn
 from dgl.nn.functional import edge_softmax
 from model.model_utils import *
 from model.model_adp import STAttention_Adp
-device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 class Model_Both(nn.Module):
     def __init__(self, SE, args, window_size = 3, T = 12, N=None, g=None):
@@ -18,9 +17,10 @@ class Model_Both(nn.Module):
         D = K * d
 
         self.num_his = args.num_his
-        self.SE = SE.to(device)
+        self.SE = SE
+        self.g = g
         emb_dim = SE.shape[1]
-        self.STEmbedding = STEmbedding(D, emb_dim=emb_dim).to(device)
+        self.STEmbedding = STEmbedding(D, emb_dim=emb_dim)
 
         self.STAttBlock_1 = nn.ModuleList([ST_Layer(K, d, T=T, window_size = window_size,N=N,g=g) for _ in range(L)])
         self.STAttBlock_2 = nn.ModuleList([ST_Layer(K, d, T=T, window_size = window_size,N=N,g=g) for _ in range(L)])
@@ -30,11 +30,24 @@ class Model_Both(nn.Module):
         self.mlp_2 = CONVs(input_dims=[D, D], units=[D, 1], activations=[F.relu, None])
 
     def forward(self, X, TE):
+        # 确保SE与输入X在同一设备上
+        SE = self.SE.to(X.device)
+        g = self.g.to(X.device) if self.g is not None else None
+        
+        # 更新STAttBlock_1和STAttBlock_2中的图
+        for layer in self.STAttBlock_1:
+            if hasattr(layer, 'stAtt_loc') and hasattr(layer.stAtt_loc, 'g') and layer.stAtt_loc.g is not None:
+                layer.stAtt_loc.g = g
+                
+        for layer in self.STAttBlock_2:
+            if hasattr(layer, 'stAtt_loc') and hasattr(layer.stAtt_loc, 'g') and layer.stAtt_loc.g is not None:
+                layer.stAtt_loc.g = g
+                
         # input
         X = torch.unsqueeze(X, -1)
         X = self.mlp_1(X)
         # STE
-        STE = self.STEmbedding(self.SE, TE)
+        STE = self.STEmbedding(SE, TE)
         STE_his = STE[:, :self.num_his]
         STE_pred = STE[:, self.num_his:]
         # encoder
@@ -79,8 +92,8 @@ class STAttention_Adp(nn.Module):
         self.FC_k  = nn.Linear(2*D, D)
         self.FC_v  = nn.Linear(2*D, D)
 
-        self.nodevec1 =nn.Parameter(torch.randn(N, 20).cuda(), requires_grad=True)
-        self.nodevec2 = nn.Parameter(torch.randn(20, N).cuda(), requires_grad=True)
+        self.nodevec1 = nn.Parameter(torch.randn(N, 20), requires_grad=True)
+        self.nodevec2 = nn.Parameter(torch.randn(20, N), requires_grad=True)
 
         self.attn_output =  TransformerSelfOutput(D,D)
         self.shift_list = self.get_shift_list()
@@ -106,8 +119,7 @@ class STAttention_Adp(nn.Module):
         adp_A = adp_A*bin_mask
         idxs= torch.nonzero(adp_A)
         src,dst = idxs[:,0],idxs[:,1]
-        adp_g = dgl.graph((src, dst)).to("cuda")
-        # adp_g.edata['weight'] = adp_A[src,dst].cuda()
+        adp_g = dgl.graph((src, dst)).to(adp_A.device)
         return adp_g
 
     def forward(self, X, STE):
@@ -157,15 +169,15 @@ class STAttention(nn.Module):
         self.window = window_size
         self.T = T
         self.N = N
-        self.g = g.to(device)
+        self.g = g
 
         self.dropout = 0.1
         self.FC_q  = nn.Linear(2*D, D)
         self.FC_k  = nn.Linear(2*D, D)
         self.FC_v  = nn.Linear(2*D, D)
  
-        self.nodevec1 =nn.Parameter(torch.randn(N, 20).cuda(), requires_grad=True)
-        self.nodevec2 = nn.Parameter(torch.randn(20, N).cuda(), requires_grad=True)
+        self.nodevec1 = nn.Parameter(torch.randn(N, 20), requires_grad=True)
+        self.nodevec2 = nn.Parameter(torch.randn(20, N), requires_grad=True)
 
         self.attn_output =  TransformerSelfOutput(D,D)
         self.shift_list = self.get_shift_list()
@@ -185,6 +197,13 @@ class STAttention(nn.Module):
 
 
     def forward(self, X, STE):
+        # 确保图与输入在同一设备上
+        if self.g is not None:
+            g = self.g.to(X.device)
+        else:
+            # 如果g为None，创建一个空图并放到当前设备上
+            g = dgl.graph(([], []), num_nodes=self.N).to(X.device)
+            
         X_STE = torch.cat((X, STE), dim=-1)
         query = self.FC_q(X_STE) 
         key = self.FC_k(X_STE)    
@@ -200,7 +219,7 @@ class STAttention(nn.Module):
         value = value.permute(2,0,1,3,4)
         key   = key.permute(2,0,1,3,4)
         
-        g = self.g.local_var()
+        g = g.local_var()
         res = 0
         for ti in range(len(self.shift_list)):
             g.ndata['q'] =  query/(hdim**0.5)

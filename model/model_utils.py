@@ -2,7 +2,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import math
-device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 class conv2d_(nn.Module):
     def __init__(self, input_dims, output_dims, kernel_size=[1, 1], stride=(1, 1),
@@ -112,7 +111,8 @@ class STEmbedding(nn.Module):
             dayofweek[i] = F.one_hot(TE[..., 0][i].to(torch.int64) % 7, 7)
         for j in range(TE.shape[0]):
             timeofday[j] = F.one_hot(TE[..., 1][j].to(torch.int64) % 288, T)
-        TE = torch.cat((dayofweek, timeofday), dim=-1).to(device)
+        # 使用设备一致性，使用TE的设备
+        TE = torch.cat((dayofweek, timeofday), dim=-1).to(TE.device)
         TE = TE.unsqueeze(dim=2)
         TE = self.mlp_te(TE)
         del dayofweek, timeofday
